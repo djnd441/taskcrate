@@ -1,0 +1,30 @@
+{
+  "name": "task-manager",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.9.0",
+  "scripts": {
+    "dev": "pnpm --filter @task-manager/desktop dev",
+    "web:dev": "pnpm --filter @task-manager/web dev",
+    "web:build": "pnpm --filter @task-manager/web build",
+    "tauri:dev": "pnpm --filter @task-manager/desktop tauri dev",
+    "build": "pnpm --filter @task-manager/desktop build",
+    "lint": "eslint .",
+    "typecheck": "pnpm -r typecheck",
+    "test": "vitest run",
+    "e2e": "playwright test",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.18.0",
+    "@playwright/test": "^1.50.0",
+    "eslint": "^9.18.0",
+    "globals": "^15.14.0",
+    "prettier": "^3.4.2",
+    "typescript": "^5.7.2",
+    "typescript-eslint": "^8.20.0",
+    "vitest": "^3.0.5"
+  }
+}

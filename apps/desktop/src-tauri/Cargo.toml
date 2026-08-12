@@ -1,0 +1,42 @@
+[package]
+name = "taskcrate"
+version = "0.1.0"
+description = "TaskCrate desktop (Tauri 2)"
+edition = "2021"
+
+[lib]
+name = "taskcrate_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-notification = "2"
+tauri-plugin-global-shortcut = "2.0.0"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rusqlite = { version = "0.32", features = ["bundled"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+thiserror = "2"
+rust_xlsxwriter = "0.96"
+calamine = "0.30"
+csv = "1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "blocking", "stream"] }
+futures-util = "0.3"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+windows = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_System_Com",
+    "Win32_System_Diagnostics_Debug",
+    "Win32_System_TaskScheduler",
+    "Win32_System_Variant",
+    "Win32_UI_WindowsAndMessaging",
+] }
+tauri-plugin-opener = "2"
+keyring = "4.1.6"
+aes-gcm = "0.10"
+getrandom = "0.2"

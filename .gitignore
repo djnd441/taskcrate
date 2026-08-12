@@ -1,0 +1,25 @@
+node_modules/
+dist/
+target/
+test-results/
+playwright-report/
+*.local
+*.log
+.DS_Store
+Thumbs.db
+**/src-tauri/gen/
+
+# 本地数据与敏感文件保护
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.pfx
+*.p12
+*.db
+*.sqlite
+*.sqlite3
+ai_api_key
+task-manager-backup-*.zip
+backups/

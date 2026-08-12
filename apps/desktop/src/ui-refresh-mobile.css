@@ -1,0 +1,17 @@
+@media (max-width: 767px) {
+  .app-topbar__left {
+    flex: 0 1 auto;
+  }
+
+  .app-topbar__right {
+    flex-shrink: 0;
+  }
+
+  .app-topbar__right .ui-button--primary {
+    display: none;
+  }
+
+  .app-topbar__title {
+    font-size: var(--ui-font-size-md);
+  }
+}

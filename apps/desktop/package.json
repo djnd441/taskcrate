@@ -1,0 +1,45 @@
+{
+  "name": "@task-manager/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./app": "./src/App.tsx",
+    "./app-styles.css": "./src/styles.css",
+    "./ui-refresh.css": "./src/ui-refresh.css",
+    "./ui-refresh-mobile.css": "./src/ui-refresh-mobile.css",
+    "./ui-refresh-board.css": "./src/ui-refresh-board.css",
+    "./ui-refresh-detail.css": "./src/ui-refresh-detail.css",
+    "./ui-refresh-pages.css": "./src/ui-refresh-pages.css"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "@dnd-kit/core": "^6.3.1",
+    "@tanstack/react-virtual": "^3.14.9",
+    "@task-manager/domain": "workspace:*",
+    "@task-manager/ui": "workspace:*",
+    "@tauri-apps/api": "^2.2.0",
+    "@tauri-apps/plugin-dialog": "^2.7.2",
+    "@tauri-apps/plugin-notification": "^2.3.3",
+    "@tauri-apps/plugin-opener": "^2.5.4",
+    "lucide-react": "^0.474.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "zod": "^4.4.3",
+    "zustand": "^5.0.2"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.2.0",
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "@vitejs/plugin-react": "^4.3.4",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.7"
+  }
+}
