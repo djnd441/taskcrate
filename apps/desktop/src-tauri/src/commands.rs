@@ -281,7 +281,8 @@ pub fn import_share_file(
     project_id: Option<String>,
 ) -> CmdResult<ImportResult> {
     let conn = lock(&state)?;
-    sharing::import_share_file(&conn, &file_path, project_id).map_err(|e| e.to_string())
+    sharing::import_share_file(&conn, &state.data_dir, &file_path, project_id)
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -291,7 +292,8 @@ pub fn import_share_json_text(
     project_id: Option<String>,
 ) -> CmdResult<ImportResult> {
     let conn = lock(&state)?;
-    sharing::import_share_json_text(&conn, &json_text, project_id).map_err(|e| e.to_string())
+    sharing::import_share_json_text(&conn, &state.data_dir, &json_text, project_id)
+        .map_err(|e| e.to_string())
 }
 #[tauri::command]
 pub fn list_projects(
@@ -849,7 +851,8 @@ pub fn list_backups(state: State<AppState>) -> CmdResult<BackupSummary> {
 #[tauri::command]
 pub fn export_json(state: State<AppState>, file_path: String) -> CmdResult<ExportResult> {
     let conn = lock(&state)?;
-    transfer::export_json(&conn, std::path::Path::new(&file_path)).map_err(|e| e.to_string())
+    transfer::export_json(&conn, &state.data_dir, std::path::Path::new(&file_path))
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -882,8 +885,13 @@ pub fn import_json(
     replace: bool,
 ) -> CmdResult<ImportResult> {
     let conn = lock(&state)?;
-    transfer::import_json(&conn, std::path::Path::new(&file_path), replace)
-        .map_err(|e| e.to_string())
+    transfer::import_json(
+        &conn,
+        &state.data_dir,
+        std::path::Path::new(&file_path),
+        replace,
+    )
+    .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -893,7 +901,8 @@ pub fn import_json_text(
     replace: bool,
 ) -> CmdResult<ImportResult> {
     let conn = lock(&state)?;
-    transfer::import_json_text(&conn, &json_text, replace).map_err(|e| e.to_string())
+    transfer::import_json_text(&conn, &state.data_dir, &json_text, replace)
+        .map_err(|e| e.to_string())
 }
 
 fn parse_version(version: &str) -> Vec<u32> {
@@ -938,10 +947,17 @@ async fn fetch_latest_release() -> Result<Option<GithubRelease>, String> {
         .timeout(Duration::from_secs(10))
         .build()
         .map_err(|error| format!("初始化网络客户端失败：{error}"))?;
-    let response = client
+    let mut request = client
         .get("https://api.github.com/repos/djnd441/taskcrate/releases/latest")
         .header("User-Agent", "TaskCrate")
-        .header("Accept", "application/vnd.github+json")
+        .header("Accept", "application/vnd.github+json");
+    if let Ok(token) = std::env::var("TASK_MANAGER_GITHUB_TOKEN") {
+        let token = token.trim();
+        if !token.is_empty() {
+            request = request.bearer_auth(token);
+        }
+    }
+    let response = request
         .send()
         .await
         .map_err(|error| format!("无法连接 GitHub：{error}"))?;

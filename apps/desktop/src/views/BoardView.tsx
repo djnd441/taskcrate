@@ -192,6 +192,29 @@ export function BoardView() {
         const projectId = overId === "project:__inbox" ? null : overId.replace("project:", "");
         await updateTask(task.id, { projectId });
         toast.push({ type: "success", title: "项目已更新" });
+      } else if (mode === "main" && overId.startsWith("main:")) {
+        if (task.taskKind === "main") {
+          return;
+        }
+        const targetMainId = overId.replace("main:", "");
+        if (task.taskKind === "major") {
+          await updateTask(task.id, { parentId: targetMainId });
+          toast.push({ type: "success", title: "任务已移动" });
+        } else {
+          const firstMajor = visibleTasks.find(
+            (item) => item.parentId === targetMainId && item.taskKind === "major",
+          );
+          if (!firstMajor) {
+            toast.push({
+              type: "warning",
+              title: "无法移动",
+              message: "目标主任务下没有大任务，请先添加大任务",
+            });
+            return;
+          }
+          await updateTask(task.id, { parentId: firstMajor.id });
+          toast.push({ type: "success", title: "任务已移动" });
+        }
       }
     } catch (dragError) {
       toast.push({ type: "danger", title: "移动失败", message: errorMessage(dragError) });

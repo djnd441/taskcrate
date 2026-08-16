@@ -139,6 +139,7 @@ function errorMessage(error: unknown): string {
 
 export function TaskListView() {
   const tasks = useTasksStore((s) => s.tasks);
+  const allTasks = useTasksStore((s) => s.allTasks);
   const total = useTasksStore((s) => s.total);
   const loading = useTasksStore((s) => s.loading);
   const error = useTasksStore((s) => s.error);
@@ -228,21 +229,49 @@ export function TaskListView() {
     [tasks],
   );
 
+  const boxAttachmentIds = useMemo(() => {
+    const byMain = new Map<string, string[]>();
+    const ids = new Set<string>();
+    for (const mainId of mainTaskIds) {
+      const queue = [mainId];
+      const list: string[] = [];
+      while (queue.length > 0) {
+        const current = queue.shift();
+        if (!current) {
+          continue;
+        }
+        list.push(current);
+        ids.add(current);
+        for (const child of allTasks.filter((task) => task.parentId === current)) {
+          queue.push(child.id);
+        }
+      }
+      byMain.set(mainId, list);
+    }
+    return { byMain, ids: [...ids] };
+  }, [allTasks, mainTaskIds]);
+
   useEffect(() => {
-    if (mainTaskIds.length === 0) {
+    if (boxAttachmentIds.ids.length === 0) {
       setAttachmentCounts({});
       return;
     }
     void getAdapters()
-      .attachments.counts(mainTaskIds)
-      .then(setAttachmentCounts)
+      .attachments.counts(boxAttachmentIds.ids)
+      .then((raw) => {
+        const next: Record<string, number> = {};
+        for (const [mainId, list] of boxAttachmentIds.byMain) {
+          next[mainId] = list.reduce((sum, id) => sum + (raw[id] ?? 0), 0);
+        }
+        setAttachmentCounts(next);
+      })
       .catch(() => setAttachmentCounts({}));
-  }, [mainTaskIds]);
+  }, [boxAttachmentIds]);
 
   const mainProgress = useMemo(() => {
     const progress = new Map<string, number>();
     const childrenByParent = new Map<string, Task[]>();
-    for (const task of tasks) {
+    for (const task of allTasks) {
       if (!task.parentId) {
         continue;
       }
@@ -267,7 +296,7 @@ export function TaskListView() {
       }
       return { total, completed };
     };
-    for (const main of tasks) {
+    for (const main of allTasks) {
       if (main.taskKind !== "main") {
         continue;
       }
@@ -443,6 +472,9 @@ export function TaskListView() {
 
   const handleBatchProject = (value: string) => {
     setBatchProject(value);
+    if (!value) {
+      return;
+    }
     void runBatch(() => batchSetProject(selectedIds, value || null)).then(() => {
       setBatchProject("");
     });
@@ -663,7 +695,11 @@ export function TaskListView() {
           <Button
             size="sm"
             variant="danger"
-            onClick={() => void runBatch(() => batchSoftDelete(selectedIds))}
+            onClick={() => {
+              if (window.confirm(`确定删除选中的 ${selectedIds.length} 项任务？`)) {
+                void runBatch(() => batchSoftDelete(selectedIds));
+              }
+            }}
           >
             删除
           </Button>
@@ -778,8 +814,16 @@ export function TaskListView() {
                         }
                         onToggleSelect={() => toggleSelect(row.task.id)}
                         onShare={() => setShareTaskId(row.task.id)}
-                        onArchive={() => void archive(row.task.id).catch(() => undefined)}
-                        onDelete={() => void softDelete(row.task.id).catch(() => undefined)}
+                        onArchive={() => {
+                          if (window.confirm(`归档 ${row.task.title}？`)) {
+                            void archive(row.task.id).catch(() => undefined);
+                          }
+                        }}
+                        onDelete={() => {
+                          if (window.confirm(`删除 ${row.task.title}？子任务会一起进入回收站。`)) {
+                            void softDelete(row.task.id).catch(() => undefined);
+                          }
+                        }}
                       />
                     )}
                   </div>

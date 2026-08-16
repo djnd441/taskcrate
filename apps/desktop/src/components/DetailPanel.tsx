@@ -137,6 +137,10 @@ export function DetailPanel() {
   const [commentError, setCommentError] = useState<string | null>(null);
   const [childKind, setChildKind] = useState<TaskKind>("major");
   const [childTitle, setChildTitle] = useState("");
+  const [childDueLocal, setChildDueLocal] = useState("");
+  const [childPriority, setChildPriority] = useState<TaskPriority>("none");
+  const [childAssignee, setChildAssignee] = useState("");
+  const [childNotes, setChildNotes] = useState("");
   const [shareOpen, setShareOpen] = useState(false);
   const [saveTemplateOpen, setSaveTemplateOpen] = useState(false);
   const [libraryPickerOpen, setLibraryPickerOpen] = useState(false);
@@ -190,9 +194,13 @@ export function DetailPanel() {
     setCommentError(null);
     setChildKind(task.taskKind === "major" ? "minor" : "major");
     setChildTitle("");
+    setChildDueLocal("");
+    setChildPriority("none");
+    setChildAssignee("");
+    setChildNotes("");
     setLibraryPickerOpen(false);
     setError(null);
-  }, [task?.id]);
+  }, [task?.id, task?.updatedAt]);
 
   if (!detailOpen || !task) {
     return null;
@@ -580,8 +588,16 @@ export function DetailPanel() {
                         title,
                         taskKind: childKind,
                         parentId: task.id,
+                        dueAt: childDueLocal ? new Date(childDueLocal).toISOString() : null,
+                        priority: childPriority,
+                        assignee: childAssignee.trim() ? childAssignee.trim() : null,
+                        notes: childNotes.trim() ? childNotes : null,
                       });
                       setChildTitle("");
+                      setChildDueLocal("");
+                      setChildPriority("none");
+                      setChildAssignee("");
+                      setChildNotes("");
                       toast.push({ type: "success", title: "子任务已添加" });
                     } catch (childError) {
                       toast.push({
@@ -595,6 +611,32 @@ export function DetailPanel() {
                   <Plus size={14} />
                   添加
                 </Button>
+                <div className="detail-child-fields">
+                  <Input
+                    label="截止时间"
+                    type="datetime-local"
+                    value={childDueLocal}
+                    onChange={(event) => setChildDueLocal(event.target.value)}
+                  />
+                  <Select
+                    label="优先级"
+                    value={childPriority}
+                    onChange={(event) => setChildPriority(event.target.value as TaskPriority)}
+                    options={PRIORITY_OPTIONS}
+                  />
+                  <Input
+                    label="负责人"
+                    value={childAssignee}
+                    onChange={(event) => setChildAssignee(event.target.value)}
+                    placeholder="例如：张三"
+                  />
+                  <Textarea
+                    label="备注"
+                    value={childNotes}
+                    onChange={(event) => setChildNotes(event.target.value)}
+                    placeholder="补充说明"
+                  />
+                </div>
               </div>
             ) : null}
           </div>
@@ -700,11 +742,25 @@ export function DetailPanel() {
             <RotateCcw size={16} />
           </IconButton>
         ) : (
-          <IconButton label="归档任务" onClick={() => void archive(task.id)}>
+          <IconButton
+            label="归档任务"
+            onClick={() => {
+              if (window.confirm(`归档 ${task.title}？`)) {
+                void archive(task.id);
+              }
+            }}
+          >
             <Archive size={16} />
           </IconButton>
         )}
-        <IconButton label="删除任务" onClick={() => void softDelete(task.id)}>
+        <IconButton
+          label="删除任务"
+          onClick={() => {
+            if (window.confirm(`删除 ${task.title}？子任务会一起进入回收站。`)) {
+              void softDelete(task.id);
+            }
+          }}
+        >
           <Trash2 size={16} />
         </IconButton>
       </div>

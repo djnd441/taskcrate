@@ -4,6 +4,8 @@ import { getAdapters } from "../adapters";
 import { useProjectsStore } from "./projectsStore";
 import { useSettingsStore } from "./settingsStore";
 import { useTagsStore } from "./tagsStore";
+import { useLibraryStore } from "./libraryStore";
+import { useTemplatesStore } from "./templatesStore";
 import { useTasksStore } from "./tasksStore";
 
 export interface DataState {
@@ -102,5 +104,7 @@ async function refreshAfterImport(): Promise<void> {
     useTagsStore.getState().loadTags(),
     useTasksStore.getState().refreshTasks(),
     useSettingsStore.getState().loadSettings(),
+    useTemplatesStore.getState().loadTemplates(),
+    useLibraryStore.getState().loadLibrary(),
   ]);
 }

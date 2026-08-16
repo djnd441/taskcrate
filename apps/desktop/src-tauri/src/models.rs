@@ -1,6 +1,7 @@
 use chrono::{SecondsFormat, Utc};
 use rusqlite::types::{FromSql, FromSqlError, FromSqlResult, ToSql, ToSqlOutput, ValueRef};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::str::FromStr;
 
 pub fn default_repeat_interval() -> i64 {
@@ -887,6 +888,10 @@ pub struct BackupPayload {
     pub library_resources: Vec<LibraryResource>,
     #[serde(default)]
     pub attachments: Vec<TaskAttachment>,
+    #[serde(default)]
+    pub attachment_files: HashMap<String, String>,
+    #[serde(default)]
+    pub library_files: HashMap<String, String>,
 }
 
 #[cfg(test)]

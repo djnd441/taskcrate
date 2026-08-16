@@ -115,10 +115,15 @@ export function ReportsView() {
   }, []);
 
   useEffect(() => {
-    void getAdapters()
-      .audit.list(200)
-      .then(setLogs)
-      .catch(() => setLogs([]));
+    const loadLogs = () => {
+      void getAdapters()
+        .audit.list(200)
+        .then(setLogs)
+        .catch(() => setLogs([]));
+    };
+    loadLogs();
+    const timer = window.setInterval(loadLogs, 60_000);
+    return () => window.clearInterval(timer);
   }, []);
 
   const stats = useMemo(() => {

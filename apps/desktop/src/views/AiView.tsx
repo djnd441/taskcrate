@@ -1,6 +1,6 @@
-import { Bot, MessageSquare, Pencil, Plus, Send, Trash2 } from "lucide-react";
+import { Bot, Copy, Download, MessageSquare, Pencil, Plus, Send, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Button, IconButton, Input, Textarea } from "@task-manager/ui";
+import { Button, IconButton, Input, Textarea, useToast } from "@task-manager/ui";
 import { shouldIgnoreEnter } from "../lib/ime";
 import { useAiStore, useUiStore } from "../stores";
 import { useSettingsStore } from "../stores/settingsStore";
@@ -179,6 +179,7 @@ export function AiView() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
   const chatRef = useRef<HTMLDivElement>(null);
+  const toast = useToast();
 
   useEffect(() => {
     void loadConversations();
@@ -189,7 +190,7 @@ export function AiView() {
     if (chat) {
       chat.scrollTop = chat.scrollHeight;
     }
-  }, [messages, loading]);
+  }, [messages, loading, streamingContent]);
 
   const provider = settings?.aiProvider ?? "off";
   const model = settings?.aiModel?.trim();
@@ -214,6 +215,38 @@ export function AiView() {
     }
   };
 
+  const copyMessage = async (content: string) => {
+    if (!content) {
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(content);
+      toast.push({ type: "success", title: "已复制" });
+    } catch {
+      toast.push({ type: "danger", title: "复制失败" });
+    }
+  };
+
+  const exportConversation = () => {
+    const title =
+      conversations.find((item) => item.id === activeConversationId)?.title ?? "AI 对话";
+    const payload = {
+      title,
+      exportedAt: new Date().toISOString(),
+      messages,
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], {
+      type: "application/json",
+    });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `${title}.json`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+    toast.push({ type: "success", title: "会话已导出" });
+  };
+
   return (
     <section className="ai-view" aria-label="AI 助手视图">
       <aside className="ai-history" aria-label="历史会话">
@@ -229,9 +262,7 @@ export function AiView() {
               key={conversation.id}
               className={[
                 "ai-history__item",
-                activeConversationId === conversation.id
-                  ? "ai-history__item--active"
-                  : "",
+                activeConversationId === conversation.id ? "ai-history__item--active" : "",
               ]
                 .filter(Boolean)
                 .join(" ")}
@@ -282,9 +313,7 @@ export function AiView() {
               ) : null}
             </div>
           ))}
-          {conversations.length === 0 ? (
-            <p className="ai-history__empty">暂无历史会话</p>
-          ) : null}
+          {conversations.length === 0 ? <p className="ai-history__empty">暂无历史会话</p> : null}
         </div>
       </aside>
 
@@ -297,6 +326,14 @@ export function AiView() {
               {model ? ` · ${model}` : ""}
             </p>
           </div>
+          <Button
+            variant="secondary"
+            onClick={exportConversation}
+            disabled={messages.length === 0 || !activeConversationId}
+          >
+            <Download size={14} />
+            导出
+          </Button>
           <Button
             variant="secondary"
             onClick={() => void clearConversation()}
@@ -356,6 +393,15 @@ export function AiView() {
                 >
                   <span className="ai-bubble__label">{isUser ? "你" : "AI"}</span>
                   <div className="ai-bubble__content">{renderMessageContent(message.content)}</div>
+                  <div className="ai-bubble__actions">
+                    <IconButton
+                      size="sm"
+                      label={isUser ? "复制你的消息" : "复制 AI 消息"}
+                      onClick={() => void copyMessage(message.content ?? "")}
+                    >
+                      <Copy size={12} />
+                    </IconButton>
+                  </div>
                 </div>
               );
             })

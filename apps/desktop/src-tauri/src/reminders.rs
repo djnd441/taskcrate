@@ -26,21 +26,47 @@ use windows::{
 
 const SCHEDULED_TASK_NAME: &str = "TaskCrate-ReminderCheck";
 
-pub fn check_due_reminders(
-    handle: &tauri::AppHandle,
+#[derive(Debug, Clone)]
+pub struct PendingReminder {
+    pub title: String,
+    pub due: String,
+    pub play_sound: bool,
+    pub targets: crate::secrets::WebhookTargets,
+}
+
+pub fn collect_due_reminders(
     data_dir: &Path,
     conn: &Connection,
-) -> Result<usize, String> {
+) -> Result<Vec<PendingReminder>, String> {
     let settings = repositories::get_settings(conn).map_err(|e| e.to_string())?;
     if !settings.reminders_enabled {
-        return Ok(0);
+        return Ok(Vec::new());
     }
     let targets = crate::secrets::webhook_targets(data_dir).unwrap_or_default();
+    let now = crate::models::now_iso();
     let until = (chrono::Utc::now() + chrono::Duration::minutes(settings.remind_minutes.max(1)))
         .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
-    let tasks = repositories::list_due_reminders(conn, &until, 100).map_err(|e| e.to_string())?;
-    let now = crate::models::now_iso();
-    let mut count = 0;
+    let tasks = repositories::list_tasks(
+        conn,
+        crate::models::TaskFilter {
+            statuses: Some(vec![
+                crate::models::TaskStatus::Todo,
+                crate::models::TaskStatus::InProgress,
+            ]),
+            due_from: Some(now.clone()),
+            due_until: Some(until),
+            ..Default::default()
+        },
+        crate::models::TaskSort {
+            field: crate::models::TaskSortField::DueAt,
+            direction: crate::models::TaskSortDirection::Asc,
+        },
+        0,
+        100,
+    )
+    .map_err(|e| e.to_string())?
+    .items;
+    let mut pending = Vec::new();
     for task in tasks {
         let already: bool = conn
             .query_row(
@@ -57,24 +83,36 @@ pub fn check_due_reminders(
             rusqlite::params![task.id, now],
         )
         .map_err(|e| e.to_string())?;
-        let due = task.due_at.as_deref().unwrap_or("未设置");
+        pending.push(PendingReminder {
+            title: task.title.clone(),
+            due: task.due_at.as_deref().unwrap_or("未设置").to_string(),
+            play_sound: settings.reminder_sound_enabled,
+            targets: targets.clone(),
+        });
+    }
+    Ok(pending)
+}
+
+pub fn send_reminders(handle: &tauri::AppHandle, pending: &[PendingReminder]) -> usize {
+    let mut count = 0;
+    for reminder in pending {
         let _ = handle
             .notification()
             .builder()
             .title("任务到期提醒")
-            .body(format!("{} · 截止 {due}", task.title))
+            .body(format!("{} · 截止 {}", reminder.title, reminder.due))
             .show();
-        if settings.reminder_sound_enabled {
+        if reminder.play_sound {
             play_reminder_sound();
         }
         let _ = crate::notify::send_webhook(
-            &targets,
+            &reminder.targets,
             "任务到期提醒",
-            &format!("{} · 截止 {due}", task.title),
+            &format!("{} · 截止 {}", reminder.title, reminder.due),
         );
         count += 1;
     }
-    Ok(count)
+    count
 }
 
 #[cfg(windows)]
@@ -227,6 +265,37 @@ mod tests {
         db::migrate(&conn).expect("migrate");
         db::seed_defaults(&conn).expect("seed defaults");
         conn
+    }
+
+    #[test]
+    fn collect_only_reminds_upcoming_tasks() {
+        let conn = test_db();
+        let now = chrono::Utc::now();
+        let past =
+            (now - chrono::Duration::hours(1)).to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        let future = (now + chrono::Duration::minutes(5))
+            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        repositories::create_task(
+            &conn,
+            crate::models::TaskCreateInput {
+                title: "已逾期任务".into(),
+                due_at: Some(past),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        repositories::create_task(
+            &conn,
+            crate::models::TaskCreateInput {
+                title: "即将到期任务".into(),
+                due_at: Some(future),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let pending = collect_due_reminders(std::path::Path::new("."), &conn).unwrap();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].title, "即将到期任务");
     }
 
     #[test]

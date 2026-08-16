@@ -1,6 +1,7 @@
 import type { Project, ProjectCreateInput, ProjectUpdateInput } from "@task-manager/domain";
 import { create } from "zustand";
 import { getAdapters } from "../adapters";
+import { useTasksStore } from "./tasksStore";
 
 export interface ProjectsState {
   projects: Project[];
@@ -45,11 +46,13 @@ export const useProjectsStore = create<ProjectsState>((set, get) => ({
   async archiveProject(id) {
     const project = await getAdapters().projects.archive(id);
     await get().loadProjects();
+    await useTasksStore.getState().refreshTasks();
     return project;
   },
 
   async deleteProject(id) {
     await getAdapters().projects.delete(id);
     await get().loadProjects();
+    await useTasksStore.getState().refreshTasks();
   },
 }));

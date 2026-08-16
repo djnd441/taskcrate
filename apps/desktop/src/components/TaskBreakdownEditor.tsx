@@ -1,15 +1,27 @@
 import { Plus, Trash2 } from "lucide-react";
-import type { TaskKind } from "@task-manager/domain";
-import { Badge, Button, IconButton, Input } from "@task-manager/ui";
+import type { TaskKind, TaskPriority } from "@task-manager/domain";
+import { Badge, Button, IconButton, Input, Select, Textarea } from "@task-manager/ui";
 import { TaskResourceEditor, type DraftResource } from "./TaskResourceEditor";
 
 export interface DraftTaskNode {
   key: string;
   kind: TaskKind;
   title: string;
+  dueLocal: string;
+  priority: TaskPriority;
+  assignee: string;
+  notes: string;
   resources: DraftResource[];
   children: DraftTaskNode[];
 }
+
+const PRIORITY_OPTIONS: { value: TaskPriority; label: string }[] = [
+  { value: "none", label: "无" },
+  { value: "low", label: "低" },
+  { value: "medium", label: "中" },
+  { value: "high", label: "高" },
+  { value: "urgent", label: "紧急" },
+];
 
 let draftTaskKey = 0;
 
@@ -19,9 +31,50 @@ function newDraftTask(kind: TaskKind): DraftTaskNode {
     key: `task-${Date.now()}-${draftTaskKey}`,
     kind,
     title: "",
+    dueLocal: "",
+    priority: "none",
+    assignee: "",
+    notes: "",
     resources: [],
     children: [],
   };
+}
+
+function TaskNodeFields({
+  node,
+  onPatch,
+}: {
+  node: DraftTaskNode;
+  onPatch: (patch: Partial<DraftTaskNode>) => void;
+}) {
+  return (
+    <div className="breakdown-node__fields">
+      <Input
+        label="截止时间"
+        type="datetime-local"
+        value={node.dueLocal}
+        onChange={(event) => onPatch({ dueLocal: event.target.value })}
+      />
+      <Select
+        label="优先级"
+        value={node.priority}
+        onChange={(event) => onPatch({ priority: event.target.value as TaskPriority })}
+        options={PRIORITY_OPTIONS}
+      />
+      <Input
+        label="负责人"
+        value={node.assignee}
+        onChange={(event) => onPatch({ assignee: event.target.value })}
+        placeholder="例如：张三"
+      />
+      <Textarea
+        label="备注"
+        value={node.notes}
+        onChange={(event) => onPatch({ notes: event.target.value })}
+        placeholder="补充说明"
+      />
+    </div>
+  );
 }
 
 export function TaskBreakdownEditor({
@@ -32,14 +85,21 @@ export function TaskBreakdownEditor({
   onChange: (nodes: DraftTaskNode[]) => void;
 }) {
   const updateNode = (key: string, patch: Partial<DraftTaskNode>) => {
-    onChange(
-      value.map((node) => (node.key === key ? { ...node, ...patch } : node)),
-    );
+    onChange(value.map((node) => (node.key === key ? { ...node, ...patch } : node)));
   };
 
   const updateChildren = (key: string, children: DraftTaskNode[]) => {
-    onChange(
-      value.map((node) => (node.key === key ? { ...node, children } : node)),
+    onChange(value.map((node) => (node.key === key ? { ...node, children } : node)));
+  };
+
+  const patchChild = (majorKey: string, childKey: string, patch: Partial<DraftTaskNode>) => {
+    const major = value.find((node) => node.key === majorKey);
+    if (!major) {
+      return;
+    }
+    updateChildren(
+      majorKey,
+      major.children.map((child) => (child.key === childKey ? { ...child, ...patch } : child)),
     );
   };
 
@@ -73,9 +133,7 @@ export function TaskBreakdownEditor({
           添加大任务
         </Button>
       </header>
-      <p className="create-editor-section__empty">
-        主任务下可拆出大任务，大任务下再拆小任务
-      </p>
+      <p className="create-editor-section__empty">主任务下可拆出大任务，大任务下再拆小任务</p>
       {value.map((major) => (
         <div key={major.key} className="breakdown-node">
           <div className="breakdown-node__row">
@@ -86,10 +144,14 @@ export function TaskBreakdownEditor({
               onChange={(event) => updateNode(major.key, { title: event.target.value })}
               placeholder="输入大任务标题"
             />
-            <IconButton label={`删除大任务 ${major.title || "未命名"}`} onClick={() => removeNode(major.key)}>
+            <IconButton
+              label={`删除大任务 ${major.title || "未命名"}`}
+              onClick={() => removeNode(major.key)}
+            >
               <Trash2 size={15} />
             </IconButton>
           </div>
+          <TaskNodeFields node={major} onPatch={(patch) => updateNode(major.key, patch)} />
           <div className="breakdown-node__children">
             {major.children.map((minor) => (
               <div key={minor.key} className="breakdown-node__child">
@@ -99,14 +161,7 @@ export function TaskBreakdownEditor({
                     label=""
                     value={minor.title}
                     onChange={(event) =>
-                      updateChildren(
-                        major.key,
-                        major.children.map((child) =>
-                          child.key === minor.key
-                            ? { ...child, title: event.target.value }
-                            : child,
-                        ),
-                      )
+                      patchChild(major.key, minor.key, { title: event.target.value })
                     }
                     placeholder="输入小任务标题"
                   />
@@ -122,17 +177,14 @@ export function TaskBreakdownEditor({
                     <Trash2 size={15} />
                   </IconButton>
                 </div>
+                <TaskNodeFields
+                  node={minor}
+                  onPatch={(patch) => patchChild(major.key, minor.key, patch)}
+                />
                 <TaskResourceEditor
                   label="小任务工具与资源"
                   resources={minor.resources}
-                  onChange={(resources) =>
-                    updateChildren(
-                      major.key,
-                      major.children.map((child) =>
-                        child.key === minor.key ? { ...child, resources } : child,
-                      ),
-                    )
-                  }
+                  onChange={(resources) => patchChild(major.key, minor.key, { resources })}
                 />
               </div>
             ))}
@@ -148,9 +200,7 @@ export function TaskBreakdownEditor({
           />
         </div>
       ))}
-      {value.length === 0 ? (
-        <p className="create-editor-section__empty">尚未添加大任务</p>
-      ) : null}
+      {value.length === 0 ? <p className="create-editor-section__empty">尚未添加大任务</p> : null}
     </section>
   );
 }

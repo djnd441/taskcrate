@@ -32,6 +32,19 @@ async function chooseImportPath(): Promise<string> {
   return selected;
 }
 
+async function chooseShareImportPath(): Promise<string> {
+  const selected = await open({
+    title: "选择分享任务文件",
+    multiple: false,
+    directory: false,
+    filters: [{ name: "TaskCrate 分享", extensions: ["task", "json"] }],
+  });
+  if (!selected || Array.isArray(selected)) {
+    throw new Error("已取消导入");
+  }
+  return selected;
+}
+
 async function chooseDataImportPath(extension: string, title: string): Promise<string> {
   const selected = await open({
     title,
@@ -182,9 +195,11 @@ export const desktopAdapter: AppAdapters = {
     remove: async (id) => {
       await bridge.deleteProjectMember(id);
     },
-  },  audit: {
+  },
+  audit: {
     list: bridge.listAuditLogs,
-  },  templates: {
+  },
+  templates: {
     list: bridge.listTaskTemplates,
     get: bridge.getTaskTemplate,
     create: bridge.createTaskTemplate,
@@ -205,14 +220,15 @@ export const desktopAdapter: AppAdapters = {
       }
       return bridge.importTaskTemplateFile(filePath);
     },
-  },  share: {
+  },
+  share: {
     async exportTask(taskId) {
       const outputPath = await chooseSavePath("task");
       const result = await bridge.exportShareTask(taskId, outputPath);
       return result;
     },
     async importFile() {
-      const filePath = await chooseImportPath();
+      const filePath = await chooseShareImportPath();
       return bridge.importShareFile(filePath, null);
     },
     importJsonText: bridge.importShareJsonText,
@@ -239,7 +255,8 @@ export const desktopAdapter: AppAdapters = {
     exportCsv: async () => bridge.exportCsv(await chooseSavePath("csv")),
     exportExcel: async () => bridge.exportExcel(await chooseSavePath("xlsx")),
     importCsvFile: async () => bridge.importCsv(await chooseDataImportPath("csv", "选择 CSV 文件")),
-    importExcelFile: async () => bridge.importExcel(await chooseDataImportPath("xlsx", "选择 Excel 文件")),
+    importExcelFile: async () =>
+      bridge.importExcel(await chooseDataImportPath("xlsx", "选择 Excel 文件")),
     importJsonFile: async (replace) => bridge.importJson(await chooseImportPath(), replace),
     importJsonText: bridge.importJsonText,
     async restoreFile() {

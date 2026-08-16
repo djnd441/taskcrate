@@ -1,29 +1,27 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { appVersion } from "@task-manager/domain";
+import { healthCheck } from "../bridge";
 import { Button, Modal, Select, Textarea, useToast } from "@task-manager/ui";
-import {
-  buildFeedbackText,
-  copyFeedbackText,
-  downloadFeedbackFile,
-} from "../lib/feedback";
+import { buildFeedbackText, copyFeedbackText, downloadFeedbackFile } from "../lib/feedback";
 
 const FEEDBACK_TYPES = ["问题反馈", "功能建议", "其他"] as const;
 
-export function FeedbackModal({
-  open,
-  onClose,
-}: {
-  open: boolean;
-  onClose: () => void;
-}) {
+export function FeedbackModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [type, setType] = useState<string>("问题反馈");
   const [description, setDescription] = useState("");
+  const [resolvedVersion, setResolvedVersion] = useState(appVersion);
   const toast = useToast();
+
+  useEffect(() => {
+    void healthCheck()
+      .then((info) => setResolvedVersion(info.version))
+      .catch(() => undefined);
+  }, []);
 
   const buildInput = () => ({
     type,
     description,
-    appVersion,
+    appVersion: resolvedVersion,
     platform: navigator.platform || "未知",
     userAgent: navigator.userAgent,
   });
@@ -73,7 +71,7 @@ export function FeedbackModal({
           placeholder="请描述遇到的问题或建议"
           rows={8}
         />
-        <p className="feedback-version">应用版本 {appVersion}</p>
+        <p className="feedback-version">应用版本 {resolvedVersion}</p>
       </div>
     </Modal>
   );

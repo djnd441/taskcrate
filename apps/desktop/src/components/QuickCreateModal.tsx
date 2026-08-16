@@ -42,6 +42,10 @@ function draftToTaskInput(node: DraftTaskNode): TaskCreateInput {
   return {
     title: node.title,
     taskKind: node.kind,
+    dueAt: node.dueLocal ? new Date(node.dueLocal).toISOString() : null,
+    priority: node.priority ?? "none",
+    assignee: node.assignee.trim() ? node.assignee.trim() : null,
+    notes: node.notes.trim() ? node.notes : null,
     resources: node.resources.map(draftToResourceInput),
     children: node.children.map(draftToTaskInput),
   };
@@ -168,11 +172,23 @@ export function QuickCreateModal() {
     }
     try {
       const task = await createTask(parsed.data);
-      for (const draft of attachments) {
-        await getAdapters().attachments.add(task.id, draft);
-      }
-      for (const item of libraryItems) {
-        await getAdapters().library.copyToTask(item.id, task.id);
+      try {
+        for (const draft of attachments) {
+          await getAdapters().attachments.add(task.id, draft);
+        }
+        for (const item of libraryItems) {
+          await getAdapters().library.copyToTask(item.id, task.id);
+        }
+      } catch (attachmentError) {
+        setAttachments([]);
+        setLibraryItems([]);
+        closeQuickCreate();
+        toast.push({
+          type: "warning",
+          title: "任务已创建，部分附件未添加",
+          message: errorMessage(attachmentError),
+        });
+        return;
       }
       setAttachments([]);
       setLibraryItems([]);

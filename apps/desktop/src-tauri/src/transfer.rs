@@ -1,17 +1,25 @@
 use crate::error::AppError;
 use crate::models::{
     now_iso, BackupPayload, ExportResult, ImportResult, Priority, ProjectCreateInput,
-    RepeatFrequency, Settings, TagCreateInput, TaskCreateInput, TaskResourceInput, TaskStatus,
+    RepeatFrequency, Settings, TagCreateInput, TaskCreateInput, TaskKind, TaskResource,
+    TaskResourceInput, TaskStatus, TaskUpdateInput,
 };
 use crate::{attachments, collaboration, library, repositories, templates};
+use base64::engine::general_purpose::STANDARD as BASE64;
+use base64::Engine as _;
 use calamine::Reader;
 use rusqlite::Connection;
 use std::collections::HashMap;
 use std::fs;
+use std::io::Read;
 use std::path::Path;
 
-pub fn export_json(conn: &Connection, path: &Path) -> Result<ExportResult, AppError> {
-    let payload = build_payload(conn)?;
+pub fn export_json(
+    conn: &Connection,
+    data_dir: &Path,
+    path: &Path,
+) -> Result<ExportResult, AppError> {
+    let payload = build_payload_with_files(conn, data_dir)?;
     let json = serde_json::to_string_pretty(&payload)
         .map_err(|e| AppError::Backup(format!("JSON 序列化失败：{e}")))?;
     fs::write(path, json)?;
@@ -24,21 +32,25 @@ pub fn export_json(conn: &Connection, path: &Path) -> Result<ExportResult, AppEr
 
 pub fn import_json(
     conn: &Connection,
+    data_dir: &Path,
     path: &Path,
     replace: bool,
 ) -> Result<ImportResult, AppError> {
     let text = fs::read_to_string(path)?;
-    import_json_text(conn, &text, replace)
+    import_json_text(conn, data_dir, &text, replace)
 }
 
 pub fn import_json_text(
     conn: &Connection,
+    data_dir: &Path,
     text: &str,
     replace: bool,
 ) -> Result<ImportResult, AppError> {
     let payload: BackupPayload =
         serde_json::from_str(text).map_err(|e| AppError::Import(format!("JSON 格式无效：{e}")))?;
-    import_payload(conn, &payload, replace)
+    let result = import_payload(conn, &payload, replace)?;
+    restore_payload_files(conn, data_dir, &payload)?;
+    Ok(result)
 }
 
 pub fn export_csv(conn: &Connection, path: &Path) -> Result<ExportResult, AppError> {
@@ -95,9 +107,127 @@ pub fn build_payload(conn: &Connection) -> Result<BackupPayload, AppError> {
         members,
         library_resources,
         attachments,
+        attachment_files: HashMap::new(),
+        library_files: HashMap::new(),
     })
 }
 
+pub fn build_payload_with_files(
+    conn: &Connection,
+    data_dir: &Path,
+) -> Result<BackupPayload, AppError> {
+    let mut payload = build_payload(conn)?;
+    let mut attachment_stmt = conn.prepare("SELECT id, storage_path FROM task_attachments")?;
+    let attachment_rows = attachment_stmt.query_map([], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    })?;
+    for row in attachment_rows {
+        let (id, storage_path) = row?;
+        if let Ok(mut file) = fs::File::open(&storage_path) {
+            let mut bytes = Vec::new();
+            if file.read_to_end(&mut bytes).is_ok() {
+                payload.attachment_files.insert(id, BASE64.encode(&bytes));
+            }
+        }
+    }
+    let mut library_stmt = conn.prepare("SELECT id, storage_path FROM library_resources")?;
+    let library_rows = library_stmt.query_map([], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    })?;
+    for row in library_rows {
+        let (id, storage_path) = row?;
+        if let Ok(mut file) = fs::File::open(&storage_path) {
+            let mut bytes = Vec::new();
+            if file.read_to_end(&mut bytes).is_ok() {
+                payload.library_files.insert(id, BASE64.encode(&bytes));
+            }
+        }
+    }
+    let _ = data_dir;
+    Ok(payload)
+}
+
+fn restore_payload_files(
+    conn: &Connection,
+    data_dir: &Path,
+    payload: &BackupPayload,
+) -> Result<(), AppError> {
+    for resource in &payload.library_resources {
+        let Some(encoded) = payload.library_files.get(&resource.id) else {
+            continue;
+        };
+        let bytes = BASE64
+            .decode(encoded.as_bytes())
+            .map_err(|e| AppError::Import(format!("素材解码失败：{e}")))?;
+        let dir = library::library_dir(data_dir);
+        fs::create_dir_all(&dir)?;
+        let file_name = format!("{}_{}", resource.id, safe_export_name(&resource.name));
+        let target = dir.join(file_name);
+        fs::write(&target, &bytes)?;
+        conn.execute(
+            "INSERT OR REPLACE INTO library_resources
+               (id, name, mime_type, kind, size_bytes, storage_path, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            rusqlite::params![
+                resource.id,
+                resource.name,
+                resource.mime_type,
+                resource.kind,
+                resource.size_bytes,
+                target.display().to_string(),
+                resource.created_at,
+                resource.updated_at
+            ],
+        )?;
+    }
+    for attachment in &payload.attachments {
+        let Some(encoded) = payload.attachment_files.get(&attachment.id) else {
+            continue;
+        };
+        let bytes = BASE64
+            .decode(encoded.as_bytes())
+            .map_err(|e| AppError::Import(format!("附件解码失败：{e}")))?;
+        let dir = attachments::storage_dir(data_dir, &attachment.task_id);
+        fs::create_dir_all(&dir)?;
+        let file_name = format!("{}_{}", attachment.id, safe_export_name(&attachment.name));
+        let target = dir.join(file_name);
+        fs::write(&target, &bytes)?;
+        conn.execute(
+            "INSERT OR REPLACE INTO task_attachments
+               (id, task_id, name, mime_type, size_bytes, storage_path, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            rusqlite::params![
+                attachment.id,
+                attachment.task_id,
+                attachment.name,
+                attachment.mime_type,
+                attachment.size_bytes,
+                target.display().to_string(),
+                attachment.created_at,
+                attachment.updated_at
+            ],
+        )?;
+    }
+    Ok(())
+}
+
+fn safe_export_name(name: &str) -> String {
+    let sanitized: String = name
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '-' | '_') {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    if sanitized.is_empty() {
+        "file".to_string()
+    } else {
+        sanitized
+    }
+}
 pub fn import_payload(
     conn: &Connection,
     payload: &BackupPayload,
@@ -328,32 +458,46 @@ fn tag_exists(conn: &Connection, id: &str) -> bool {
     .unwrap_or(false)
 }
 
-fn apply_settings(conn: &Connection, settings: &Settings) -> Result<(), AppError> {
-    let theme = serde_json::to_string(&settings.theme)
-        .map_err(|e| AppError::Import(format!("主题设置格式无效：{e}")))?;
-    let language = serde_json::to_string(&settings.language)
-        .map_err(|e| AppError::Import(format!("语言设置格式无效：{e}")))?;
-    let reminders = serde_json::to_string(&settings.reminders_enabled)
-        .map_err(|e| AppError::Import(format!("提醒设置格式无效：{e}")))?;
-    let remind_minutes = serde_json::to_string(&settings.remind_minutes)
-        .map_err(|e| AppError::Import(format!("提醒时间设置格式无效：{e}")))?;
-    let backup_interval = serde_json::to_string(&settings.backup_interval_hours)
-        .map_err(|e| AppError::Import(format!("备份设置格式无效：{e}")))?;
-    let data_directory = serde_json::to_string(&settings.data_directory)
-        .map_err(|e| AppError::Import(format!("数据目录设置格式无效：{e}")))?;
-    let last_backup = serde_json::to_string(&settings.last_backup_at)
-        .map_err(|e| AppError::Import(format!("备份时间设置格式无效：{e}")))?;
-
-    repositories::upsert_setting(conn, "theme", &theme)?;
-    repositories::upsert_setting(conn, "language", &language)?;
-    repositories::upsert_setting(conn, "reminders_enabled", &reminders)?;
-    repositories::upsert_setting(conn, "remind_minutes", &remind_minutes)?;
-    repositories::upsert_setting(conn, "backup_interval_hours", &backup_interval)?;
-    repositories::upsert_setting(conn, "data_directory", &data_directory)?;
-    repositories::upsert_setting(conn, "last_backup_at", &last_backup)?;
-    Ok(())
+fn upsert_serialized<T: serde::Serialize>(
+    conn: &Connection,
+    key: &str,
+    value: &T,
+) -> Result<(), AppError> {
+    let encoded = serde_json::to_string(value)
+        .map_err(|e| AppError::Import(format!("设置 {key} 格式无效：{e}")))?;
+    repositories::upsert_setting(conn, key, &encoded)
 }
 
+fn apply_settings(conn: &Connection, settings: &Settings) -> Result<(), AppError> {
+    upsert_serialized(conn, "theme", &settings.theme)?;
+    upsert_serialized(conn, "language", &settings.language)?;
+    upsert_serialized(conn, "reminders_enabled", &settings.reminders_enabled)?;
+    upsert_serialized(conn, "remind_minutes", &settings.remind_minutes)?;
+    upsert_serialized(
+        conn,
+        "reminder_sound_enabled",
+        &settings.reminder_sound_enabled,
+    )?;
+    upsert_serialized(conn, "remind_when_closed", &settings.remind_when_closed)?;
+    upsert_serialized(
+        conn,
+        "backup_interval_hours",
+        &settings.backup_interval_hours,
+    )?;
+    upsert_serialized(conn, "data_directory", &settings.data_directory)?;
+    upsert_serialized(conn, "last_backup_at", &settings.last_backup_at)?;
+    upsert_serialized(conn, "ai_provider", &settings.ai_provider)?;
+    upsert_serialized(conn, "ai_base_url", &settings.ai_base_url)?;
+    upsert_serialized(conn, "ai_model", &settings.ai_model)?;
+    upsert_serialized(conn, "ai_temperature", &settings.ai_temperature)?;
+    upsert_serialized(conn, "ai_tools_enabled", &settings.ai_tools_enabled)?;
+    upsert_serialized(
+        conn,
+        "ai_confirm_destructive",
+        &settings.ai_confirm_destructive,
+    )?;
+    Ok(())
+}
 fn csv_field(value: &str) -> String {
     if value.contains(',') || value.contains('"') || value.contains('\n') {
         format!("\"{}\"", value.replace('"', "\"\""))
@@ -400,6 +544,7 @@ fn export_rows(conn: &Connection) -> Result<(Vec<Vec<String>>, usize), AppError>
         "标签".to_string(),
         "任务层级".to_string(),
         "父任务ID".to_string(),
+        "资源".to_string(),
         "完成标准".to_string(),
         "预算".to_string(),
         "创建时间".to_string(),
@@ -437,6 +582,7 @@ fn export_rows(conn: &Connection) -> Result<(Vec<Vec<String>>, usize), AppError>
             tags,
             task.task_kind.as_str().to_string(),
             task.parent_id.clone().unwrap_or_default(),
+            serde_json::to_string(&task.resources).unwrap_or_default(),
             task.done_criteria.clone().unwrap_or_default(),
             task.budget.clone().unwrap_or_default(),
             task.created_at.clone(),
@@ -552,6 +698,8 @@ fn import_rows(conn: &Connection, rows: &[Vec<String>]) -> Result<ImportResult, 
     let mut imported_projects = 0;
     let mut imported_tags = 0;
     let mut imported_tasks = 0;
+    let mut id_map: HashMap<String, String> = HashMap::new();
+    let mut pending_hierarchy: Vec<(String, Option<String>, TaskKind)> = Vec::new();
 
     for row in rows.iter().skip(1) {
         let Some(title) = field(row, &headers, &["标题", "title"]) else {
@@ -633,7 +781,28 @@ fn import_rows(conn: &Connection, rows: &[Vec<String>]) -> Result<ImportResult, 
             .and_then(|value| value.parse::<i64>().ok())
             .unwrap_or(1);
 
-        repositories::create_task(
+        let original_id = field(row, &headers, &["id"]).map(str::to_string);
+        let parent_ref = field(row, &headers, &["父任务ID", "parentid"]).map(str::to_string);
+        let task_kind = match field(row, &headers, &["任务层级", "taskkind"]) {
+            Some("major") | Some("大任务") => TaskKind::Major,
+            Some("minor") | Some("小任务") => TaskKind::Minor,
+            _ => TaskKind::Main,
+        };
+        let resources: Vec<TaskResourceInput> = field(row, &headers, &["资源", "resources"])
+            .and_then(|value| serde_json::from_str::<Vec<TaskResource>>(value).ok())
+            .unwrap_or_default()
+            .into_iter()
+            .map(|resource| TaskResourceInput {
+                name: resource.name,
+                kind: resource.kind,
+                quantity: resource.quantity,
+                unit: resource.unit,
+                status: resource.status,
+                notes: resource.notes,
+                sort_order: resource.sort_order,
+            })
+            .collect();
+        let created = repositories::create_task(
             conn,
             TaskCreateInput {
                 title: title.to_string(),
@@ -651,10 +820,37 @@ fn import_rows(conn: &Connection, rows: &[Vec<String>]) -> Result<ImportResult, 
                 status,
                 project_id,
                 tag_ids,
+                resources,
                 ..Default::default()
             },
         )?;
+        if let Some(original_id) = original_id {
+            id_map.insert(original_id, created.id.clone());
+        }
+        pending_hierarchy.push((created.id, parent_ref, task_kind));
         imported_tasks += 1;
+    }
+
+    for (created_id, parent_ref, kind) in pending_hierarchy {
+        if kind == TaskKind::Main {
+            continue;
+        }
+        let Some(parent_id) = parent_ref
+            .as_deref()
+            .and_then(|old| id_map.get(old))
+            .cloned()
+        else {
+            continue;
+        };
+        repositories::update_task(
+            conn,
+            &created_id,
+            TaskUpdateInput {
+                task_kind: Some(kind),
+                parent_id: Some(Some(parent_id)),
+                ..Default::default()
+            },
+        )?;
     }
 
     Ok(ImportResult {
@@ -718,7 +914,7 @@ mod tests {
     #[test]
     fn json_export_and_replace_import_roundtrip() {
         let conn = test_db();
-        repositories::create_task(
+        let task = repositories::create_task(
             &conn,
             TaskCreateInput {
                 title: "备份任务".into(),
@@ -729,11 +925,24 @@ mod tests {
 
         let dir = std::env::temp_dir().join(Uuid::new_v4().to_string());
         std::fs::create_dir_all(&dir).unwrap();
+        let attachment_source = dir.join("photo.png");
+        std::fs::write(&attachment_source, b"image-data").unwrap();
+        crate::attachments::add_attachment(
+            &conn,
+            &dir,
+            &task.id,
+            attachment_source.to_str().unwrap(),
+        )
+        .unwrap();
+        let library_source = dir.join("meeting.pdf");
+        std::fs::write(&library_source, b"pdf-data").unwrap();
+        crate::library::add_library(&conn, &dir, library_source.to_str().unwrap()).unwrap();
+
         let path = dir.join("task-manager-backup.json");
-        export_json(&conn, &path).unwrap();
+        export_json(&conn, &dir, &path).unwrap();
 
         let restored = test_db();
-        let result = import_json(&restored, &path, true).unwrap();
+        let result = import_json(&restored, &dir, &path, true).unwrap();
         assert_eq!(result.tasks, 1);
 
         let all = repositories::list_tasks(
@@ -746,6 +955,13 @@ mod tests {
         .unwrap();
         assert_eq!(all.total, 1);
         assert_eq!(all.items[0].title, "备份任务");
+        assert_eq!(
+            crate::attachments::list_all_attachments(&restored)
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(crate::library::list_library(&restored).unwrap().len(), 1);
 
         std::fs::remove_dir_all(&dir).unwrap();
     }
@@ -791,6 +1007,74 @@ mod tests {
     }
 
     #[test]
+    fn csv_roundtrip_keeps_hierarchy_and_resources() {
+        let conn = test_db();
+        repositories::create_task(
+            &conn,
+            TaskCreateInput {
+                title: "层级主任务".into(),
+                resources: vec![TaskResourceInput {
+                    name: "主资源".into(),
+                    ..Default::default()
+                }],
+                children: vec![TaskCreateInput {
+                    title: "层级大任务".into(),
+                    task_kind: crate::models::TaskKind::Major,
+                    resources: vec![TaskResourceInput {
+                        name: "大资源".into(),
+                        ..Default::default()
+                    }],
+                    children: vec![TaskCreateInput {
+                        title: "层级小任务".into(),
+                        task_kind: crate::models::TaskKind::Minor,
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        let dir = std::env::temp_dir().join(Uuid::new_v4().to_string());
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("hierarchy.csv");
+        export_csv(&conn, &path).unwrap();
+
+        let restored = test_db();
+        import_csv(&restored, &path).unwrap();
+        let all = repositories::list_tasks(
+            &restored,
+            crate::models::TaskFilter::default(),
+            crate::models::TaskSort::default(),
+            0,
+            100,
+        )
+        .unwrap();
+        assert_eq!(all.total, 3);
+        let major = all
+            .items
+            .iter()
+            .find(|task| task.task_kind == crate::models::TaskKind::Major)
+            .unwrap();
+        let minor = all
+            .items
+            .iter()
+            .find(|task| task.task_kind == crate::models::TaskKind::Minor)
+            .unwrap();
+        let main = all
+            .items
+            .iter()
+            .find(|task| task.task_kind == crate::models::TaskKind::Main)
+            .unwrap();
+        assert_eq!(major.parent_id.as_deref(), Some(main.id.as_str()));
+        assert_eq!(minor.parent_id.as_deref(), Some(major.id.as_str()));
+        assert_eq!(main.resources[0].name, "主资源");
+        assert_eq!(major.resources[0].name, "大资源");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
     fn excel_export_and_import_roundtrip() {
         let conn = test_db();
         repositories::create_task(
@@ -830,7 +1114,7 @@ mod tests {
     #[test]
     fn import_rejects_invalid_json() {
         let conn = test_db();
-        let result = import_json_text(&conn, "{not-json", false);
+        let result = import_json_text(&conn, std::path::Path::new("."), "{not-json", false);
         assert!(matches!(result, Err(AppError::Import(_))));
     }
 }

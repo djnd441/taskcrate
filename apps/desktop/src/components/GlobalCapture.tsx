@@ -53,7 +53,11 @@ export function GlobalCapture() {
       if (isTauri()) {
         await createCaptureTask(title);
       } else {
-        await getAdapters().tasks.create({ title, projectId: null });
+        await getAdapters().tasks.create({
+          title,
+          projectId: null,
+          taskKind: "main",
+        });
       }
       setValue("");
       setStatus("已存入收件箱");
@@ -71,7 +75,12 @@ export function GlobalCapture() {
           <Inbox size={14} />
           TaskCrate 速记
         </span>
-        <button type="button" className="capture-window__close" onClick={hideWindow} aria-label="关闭速记">
+        <button
+          type="button"
+          className="capture-window__close"
+          onClick={hideWindow}
+          aria-label="关闭速记"
+        >
           <X size={15} />
         </button>
       </div>

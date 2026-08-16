@@ -31,17 +31,16 @@ pub struct AppState {
 }
 
 fn background_tick(
-    handle: &tauri::AppHandle,
     data_dir: &Path,
-    conn: &mut Connection,
-) -> Result<(), String> {
+    conn: &Connection,
+) -> Result<Vec<reminders::PendingReminder>, String> {
     let settings = repositories::get_settings(conn).map_err(|e| e.to_string())?;
-    let _ = reminders::check_due_reminders(handle, data_dir, conn);
+    let pending = reminders::collect_due_reminders(data_dir, conn)?;
 
     if let Some(interval) = settings.backup_interval_hours {
         backup::run_scheduled_backup(conn, data_dir, interval).map_err(|e| e.to_string())?;
     }
-    Ok(())
+    Ok(pending)
 }
 
 fn show_main_window_only(handle: &tauri::AppHandle) {
@@ -69,8 +68,10 @@ fn start_background_services(handle: &tauri::AppHandle) {
     let handle = handle.clone();
     std::thread::spawn(move || loop {
         if let Some(state) = handle.try_state::<AppState>() {
-            if let Ok(mut conn) = state.conn.lock() {
-                let _ = background_tick(&handle, &state.data_dir, &mut conn);
+            if let Ok(conn) = state.conn.lock() {
+                let pending = background_tick(&state.data_dir, &conn).unwrap_or_default();
+                drop(conn);
+                reminders::send_reminders(&handle, &pending);
             }
         }
         std::thread::sleep(Duration::from_secs(60));
@@ -119,6 +120,9 @@ pub fn run() {
             db::migrate(&conn)?;
             db::seed_defaults(&conn)?;
             crate::secrets::migrate_legacy(&data_dir, &conn)?;
+            let remind_when_closed = repositories::get_settings(&conn)
+                .map(|settings| settings.remind_when_closed)
+                .unwrap_or(false);
             let state = AppState {
                 conn: Mutex::new(conn),
                 data_dir: data_dir.clone(),
@@ -129,13 +133,19 @@ pub fn run() {
                 }
                 let handle = app.handle().clone();
                 if let Ok(conn) = state.conn.lock() {
-                    let _ = reminders::check_due_reminders(&handle, &data_dir, &conn);
+                    let pending =
+                        reminders::collect_due_reminders(&data_dir, &conn).unwrap_or_default();
+                    drop(conn);
+                    reminders::send_reminders(&handle, &pending);
                 }
                 std::thread::spawn(move || {
                     std::thread::sleep(Duration::from_millis(1500));
                     let _ = handle.exit(0);
                 });
             } else {
+                if remind_when_closed {
+                    let _ = reminders::register_scheduled_reminders(true);
+                }
                 show_main_window_only(app.handle());
                 start_background_services(app.handle());
             }

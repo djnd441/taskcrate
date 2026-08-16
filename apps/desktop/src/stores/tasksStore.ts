@@ -112,35 +112,40 @@ export const useTasksStore = create<TasksState>((set, get) => ({
 
   async archive(id) {
     const task = await getAdapters().tasks.archive(id);
+    set((state) => ({ selectedIds: state.selectedIds.filter((selected) => selected !== id) }));
     await get().refreshTasks();
     return task;
   },
 
   async unarchive(id) {
     const task = await getAdapters().tasks.unarchive(id);
+    set((state) => ({ selectedIds: state.selectedIds.filter((selected) => selected !== id) }));
     await get().refreshTasks();
     return task;
   },
 
   async softDelete(id) {
     const task = await getAdapters().tasks.softDelete(id);
+    set((state) => ({ selectedIds: state.selectedIds.filter((selected) => selected !== id) }));
     await get().refreshTasks();
     return task;
   },
 
   async restore(id) {
     const task = await getAdapters().tasks.restore(id);
+    set((state) => ({ selectedIds: state.selectedIds.filter((selected) => selected !== id) }));
     await get().refreshTasks();
     return task;
   },
 
   async hardDelete(id) {
     await getAdapters().tasks.hardDelete(id);
+    set((state) => ({ selectedIds: state.selectedIds.filter((selected) => selected !== id) }));
     await get().refreshTasks();
   },
 
   setFilter(filter) {
-    set({ filter, offset: 0 });
+    set({ filter, offset: 0, selectedIds: [] });
     void get().loadTasks();
   },
 

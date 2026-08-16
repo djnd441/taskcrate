@@ -1,5 +1,5 @@
 import { Menu, Moon, Plus, Search, Sun } from "lucide-react";
-import { useEffect, useMemo } from "react";
+import { lazy, Suspense, useEffect, useMemo } from "react";
 import { Button, IconButton, ToastProvider } from "@task-manager/ui";
 import { AppSidebar } from "./components/AppSidebar";
 import { CommandPalette } from "./components/CommandPalette";
@@ -20,12 +20,21 @@ import {
 } from "./stores";
 import { selectTheme } from "./stores/selectors";
 import { isTaskOverdue } from "./lib/taskViewModel";
-import { BoardView } from "./views/BoardView";
-import { SettingsView } from "./views/SettingsView";
-import { ReportsView } from "./views/ReportsView";
 import { TaskListView } from "./views/TaskListView";
-import { TrashView } from "./views/TrashView";
-import { AiView } from "./views/AiView";
+
+const BoardView = lazy(() =>
+  import("./views/BoardView").then((module) => ({ default: module.BoardView })),
+);
+const AiView = lazy(() => import("./views/AiView").then((module) => ({ default: module.AiView })));
+const ReportsView = lazy(() =>
+  import("./views/ReportsView").then((module) => ({ default: module.ReportsView })),
+);
+const SettingsView = lazy(() =>
+  import("./views/SettingsView").then((module) => ({ default: module.SettingsView })),
+);
+const TrashView = lazy(() =>
+  import("./views/TrashView").then((module) => ({ default: module.TrashView })),
+);
 
 const VIEW_TITLES = {
   tasks: "任务列表",
@@ -288,7 +297,11 @@ function AppContent() {
             </Button>
           </div>
         </header>
-        <main className="app-content">{renderView()}</main>
+        <main className="app-content">
+          <Suspense fallback={<div className="view-loading">加载中...</div>}>
+            {renderView()}
+          </Suspense>
+        </main>
       </div>
       <DetailPanel />
       <CommandPalette />

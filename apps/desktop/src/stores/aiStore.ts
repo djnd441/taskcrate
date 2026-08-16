@@ -280,6 +280,9 @@ export const useAiStore = create<AiState>((set, get) => {
     },
 
     async newConversation() {
+      if (get().loading) {
+        return;
+      }
       set({
         activeConversationId: null,
         messages: [],
@@ -325,6 +328,9 @@ export const useAiStore = create<AiState>((set, get) => {
     },
 
     async deleteConversation(id) {
+      if (get().loading) {
+        return;
+      }
       await getAdapters().ai.deleteConversation(id);
       set((state) => ({
         conversations: state.conversations.filter((item) => item.id !== id),
@@ -407,6 +413,9 @@ export const useAiStore = create<AiState>((set, get) => {
     },
 
     async clearConversation() {
+      if (get().loading) {
+        return;
+      }
       set({ messages: [], pendingActions: [], loading: false, rounds: 0, streamingContent: null });
       await persistActive([]);
     },

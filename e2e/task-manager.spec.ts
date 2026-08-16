@@ -289,6 +289,7 @@ test("edits task details from the detail panel", async ({ page }) => {
 });
 
 test("batch deletes a task and restores it from trash", async ({ page }) => {
+  page.on("dialog", (dialog) => void dialog.accept());
   await expect(page.getByRole("heading", { name: "任务列表" })).toBeVisible();
   await createFromQuickBar(page, "e2e 批量任务");
   const taskRowText = page.locator(".task-row__title").filter({ hasText: "e2e 批量任务" });
@@ -373,7 +374,9 @@ test("recurring main task creates next occurrence after completion", async ({ pa
   const editor = page.getByRole("dialog", { name: "编辑任务" });
   await editor.getByLabel("重复").selectOption("weekly");
   await editor.getByRole("button", { name: "完成创建" }).click();
-  await expect(page.locator(".task-row").filter({ hasText: "e2e 周期任务" }).getByText("每周")).toBeVisible();
+  await expect(
+    page.locator(".task-row").filter({ hasText: "e2e 周期任务" }).getByText("每周"),
+  ).toBeVisible();
 
   await page.getByRole("checkbox", { name: "完成 e2e 周期任务" }).click();
   await expect(page.locator(".task-row__title").filter({ hasText: "e2e 周期任务" })).toHaveCount(2);

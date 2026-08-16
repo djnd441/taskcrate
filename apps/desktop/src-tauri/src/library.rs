@@ -152,17 +152,15 @@ pub fn copy_library_to_task(
     if repositories::get_task(conn, task_id)?.is_none() {
         return Err(AppError::TaskNotFound(task_id.to_string()));
     }
-    let storage_path: Option<String> = conn
+    let (name, storage_path): (String, String) = conn
         .query_row(
-            "SELECT storage_path FROM library_resources WHERE id = ?",
+            "SELECT name, storage_path FROM library_resources WHERE id = ?",
             rusqlite::params![library_id],
-            |row| row.get(0),
+            |row| Ok((row.get(0)?, row.get(1)?)),
         )
-        .optional()?;
-    let Some(storage_path) = storage_path else {
-        return Err(AppError::Validation("素材不存在".to_string()));
-    };
-    attachments::add_attachment(conn, data_dir, task_id, &storage_path)
+        .optional()?
+        .ok_or_else(|| AppError::Validation("素材不存在".to_string()))?;
+    attachments::add_attachment_with_name(conn, data_dir, task_id, &storage_path, &name)
 }
 
 fn get_library(conn: &Connection, id: &str) -> Result<Option<LibraryResource>, AppError> {

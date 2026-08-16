@@ -112,15 +112,35 @@ pub fn add_attachment(
     task_id: &str,
     source_path: &str,
 ) -> Result<TaskAttachment, AppError> {
-    if repositories::get_task(conn, task_id)?.is_none() {
-        return Err(AppError::TaskNotFound(task_id.to_string()));
-    }
     let source = Path::new(source_path);
     let file_name = source
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or("attachment")
         .to_string();
+    add_attachment_with_name(conn, data_dir, task_id, source_path, &file_name)
+}
+
+pub fn add_attachment_with_name(
+    conn: &Connection,
+    data_dir: &Path,
+    task_id: &str,
+    source_path: &str,
+    name: &str,
+) -> Result<TaskAttachment, AppError> {
+    if repositories::get_task(conn, task_id)?.is_none() {
+        return Err(AppError::TaskNotFound(task_id.to_string()));
+    }
+    let source = Path::new(source_path);
+    let file_name = if name.trim().is_empty() {
+        source
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("attachment")
+            .to_string()
+    } else {
+        name.trim().to_string()
+    };
     let size_bytes = fs::metadata(source)?.len();
     let dir = storage_dir(data_dir, task_id);
     fs::create_dir_all(&dir)?;
@@ -137,6 +157,47 @@ pub fn add_attachment(
             id,
             task_id,
             file_name,
+            size_bytes,
+            target.display().to_string(),
+            now
+        ],
+    )?;
+    get_attachment(conn, &id)?.ok_or_else(|| AppError::Validation("附件创建失败".to_string()))
+}
+
+pub fn add_attachment_bytes(
+    conn: &Connection,
+    data_dir: &Path,
+    task_id: &str,
+    name: &str,
+    mime_type: &str,
+    size_bytes: u64,
+    bytes: &[u8],
+) -> Result<TaskAttachment, AppError> {
+    if repositories::get_task(conn, task_id)?.is_none() {
+        return Err(AppError::TaskNotFound(task_id.to_string()));
+    }
+    let file_name = if name.trim().is_empty() {
+        "attachment".to_string()
+    } else {
+        name.trim().to_string()
+    };
+    let dir = storage_dir(data_dir, task_id);
+    fs::create_dir_all(&dir)?;
+    let target = dir.join(format!("{}-{}", Uuid::new_v4(), safe_file_name(&file_name)));
+    fs::write(&target, bytes)?;
+
+    let now = now_iso();
+    let id = Uuid::new_v4().to_string();
+    conn.execute(
+        "INSERT INTO task_attachments
+           (id, task_id, name, mime_type, size_bytes, storage_path, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)",
+        rusqlite::params![
+            id,
+            task_id,
+            file_name,
+            mime_type,
             size_bytes,
             target.display().to_string(),
             now
@@ -172,7 +233,6 @@ pub fn package_task(
 ) -> Result<PackageResult, AppError> {
     let task = repositories::get_task(conn, task_id)?
         .ok_or_else(|| AppError::TaskNotFound(task_id.to_string()))?;
-    let attachments = list_attachments(conn, task_id)?;
     let all = repositories::list_tasks(
         conn,
         crate::models::TaskFilter {
@@ -190,11 +250,19 @@ pub fn package_task(
         .filter(|item| item.id == task.id || is_descendant(item, &all, &task.id))
         .cloned()
         .collect();
+    let mut attachments = Vec::new();
+    for box_task in &box_tasks {
+        attachments.extend(list_attachments(conn, &box_task.id)?);
+    }
 
     let file = fs::File::create(output_path)?;
     let mut zip = ZipWriter::new(file);
     let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
 
+    let task_titles: HashMap<&str, &str> = box_tasks
+        .iter()
+        .map(|item| (item.id.as_str(), item.title.as_str()))
+        .collect();
     for attachment in &attachments {
         let stored_path: Option<String> = conn
             .query_row(
@@ -210,7 +278,11 @@ pub fn package_task(
         if let Ok(mut file) = fs::File::open(&source) {
             let mut bytes = Vec::new();
             if file.read_to_end(&mut bytes).is_ok() {
-                zip.start_file(format!("附件/{}", attachment.name), options)
+                let owner = task_titles
+                    .get(attachment.task_id.as_str())
+                    .copied()
+                    .unwrap_or("任务");
+                zip.start_file(format!("附件/{}/{}", owner, attachment.name), options)
                     .map_err(|e| AppError::Backup(format!("打包失败：{e}")))?;
                 zip.write_all(&bytes)
                     .map_err(|e| AppError::Backup(format!("打包失败：{e}")))?;
@@ -312,16 +384,27 @@ fn build_task_markdown(
         }
     }
     markdown.push_str("\n## 工具与资源\n");
-    for resource in &task.resources {
-        markdown.push_str(&format!(
-            "- {}（{}）\n",
-            resource.name,
-            resource.status.as_str()
-        ));
+    for box_task in box_tasks {
+        if box_task.resources.is_empty() {
+            continue;
+        }
+        markdown.push_str(&format!("- {}：\n", box_task.title));
+        for resource in &box_task.resources {
+            markdown.push_str(&format!(
+                "  - {}（{}）\n",
+                resource.name,
+                resource.status.as_str()
+            ));
+        }
     }
     markdown.push_str("\n## 附件\n");
     for attachment in attachments {
-        markdown.push_str(&format!("- {}\n", attachment.name));
+        let owner = box_tasks
+            .iter()
+            .find(|item| item.id == attachment.task_id)
+            .map(|item| item.title.as_str())
+            .unwrap_or("任务");
+        markdown.push_str(&format!("- [{}] {}\n", owner, attachment.name));
     }
     markdown
 }
@@ -337,6 +420,58 @@ mod tests {
         db::migrate(&conn).expect("migrate");
         db::seed_defaults(&conn).expect("seed defaults");
         conn
+    }
+
+    #[test]
+    fn package_task_includes_descendant_attachments() {
+        let conn = test_db();
+        let dir = std::env::temp_dir().join(format!(
+            "task-manager-box-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let main = repositories::create_task(
+            &conn,
+            crate::models::TaskCreateInput {
+                title: "箱任务".into(),
+                children: vec![crate::models::TaskCreateInput {
+                    title: "大任务".into(),
+                    task_kind: crate::models::TaskKind::Major,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let all = repositories::list_tasks(
+            &conn,
+            crate::models::TaskFilter::default(),
+            crate::models::TaskSort::default(),
+            0,
+            100,
+        )
+        .unwrap();
+        let major = all
+            .items
+            .iter()
+            .find(|task| task.task_kind == crate::models::TaskKind::Major)
+            .unwrap();
+        let main_source = dir.join("main.pdf");
+        fs::write(&main_source, b"main").unwrap();
+        add_attachment(&conn, &dir, &main.id, main_source.to_str().unwrap()).unwrap();
+        let child_source = dir.join("child.png");
+        fs::write(&child_source, b"child").unwrap();
+        add_attachment(&conn, &dir, &major.id, child_source.to_str().unwrap()).unwrap();
+
+        let output = dir.join("box.zip");
+        let result = package_task(&conn, &dir, &main.id, output.to_str().unwrap()).unwrap();
+        assert_eq!(result.count, 2);
+        assert!(output.exists());
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

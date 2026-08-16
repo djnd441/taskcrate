@@ -1,6 +1,7 @@
 import type { Tag, TagCreateInput, TagUpdateInput } from "@task-manager/domain";
 import { create } from "zustand";
 import { getAdapters } from "../adapters";
+import { useTasksStore } from "./tasksStore";
 
 export interface TagsState {
   tags: Tag[];
@@ -44,5 +45,6 @@ export const useTagsStore = create<TagsState>((set, get) => ({
   async deleteTag(id) {
     await getAdapters().tags.delete(id);
     await get().loadTags();
+    await useTasksStore.getState().refreshTasks();
   },
 }));

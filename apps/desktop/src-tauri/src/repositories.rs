@@ -278,6 +278,38 @@ fn create_task_inner(
     get_task(conn, &id)?.ok_or(AppError::TaskNotFound(id))
 }
 
+fn validate_existing_children_kinds(
+    conn: &Connection,
+    kind: TaskKind,
+    id: &str,
+) -> Result<(), AppError> {
+    let children = load_children(conn, id)?;
+    match kind {
+        TaskKind::Main => {
+            if children
+                .iter()
+                .any(|child| child.task_kind != TaskKind::Major)
+            {
+                return Err(AppError::Validation("主任务下只能添加大任务".to_string()));
+            }
+        }
+        TaskKind::Major => {
+            if children
+                .iter()
+                .any(|child| child.task_kind != TaskKind::Minor)
+            {
+                return Err(AppError::Validation("大任务下只能添加小任务".to_string()));
+            }
+        }
+        TaskKind::Minor => {
+            if !children.is_empty() {
+                return Err(AppError::Validation("小任务不能再拆分子任务".to_string()));
+            }
+        }
+    }
+    Ok(())
+}
+
 fn validate_children_kinds(kind: TaskKind, children: &[TaskCreateInput]) -> Result<(), AppError> {
     match kind {
         TaskKind::Main => {
@@ -506,6 +538,7 @@ pub fn update_task(conn: &Connection, id: &str, input: TaskUpdateInput) -> Resul
         task.parent_id = parent_id;
     }
     validate_task_hierarchy(conn, task.task_kind, task.parent_id.as_deref())?;
+    validate_existing_children_kinds(conn, task.task_kind, id)?;
     validate_repeat_settings(task.task_kind, task.repeat_frequency, task.repeat_interval)?;
     if task.task_kind == TaskKind::Minor && has_children(conn, id)? {
         return Err(AppError::Validation("小任务不能包含子任务".to_string()));
@@ -567,9 +600,10 @@ fn is_descendant(conn: &Connection, ancestor: &str, candidate: &str) -> Result<b
             .query_row(
                 "SELECT parent_id FROM tasks WHERE id = ?",
                 params![task_id],
-                |row| row.get(0),
+                |row| row.get::<_, Option<String>>(0),
             )
-            .optional()?;
+            .optional()?
+            .flatten();
         current = parent_id;
     }
     Ok(false)
@@ -1245,6 +1279,19 @@ pub fn update_project(
             id
         ],
     )?;
+    if input.is_archived == Some(true) {
+        conn.execute(
+            "UPDATE tasks SET archived_at = ?1, updated_at = ?2
+             WHERE project_id = ?3 AND deleted_at IS NULL AND archived_at IS NULL",
+            params![project.updated_at, project.updated_at, id],
+        )?;
+    } else if input.is_archived == Some(false) {
+        conn.execute(
+            "UPDATE tasks SET archived_at = NULL, updated_at = ?1
+             WHERE project_id = ?2 AND deleted_at IS NULL AND archived_at IS NOT NULL",
+            params![project.updated_at, id],
+        )?;
+    }
     get_project(conn, id)?.ok_or_else(|| AppError::ProjectNotFound(id.to_string()))
 }
 
@@ -1820,6 +1867,52 @@ mod tests {
     }
 
     #[test]
+    fn update_task_can_attach_orphan_as_major() {
+        let conn = test_db();
+        let main = create_task(&conn, task_input("主任务")).unwrap();
+        let orphan = create_task(&conn, task_input("待挂载")).unwrap();
+        let updated = update_task(
+            &conn,
+            &orphan.id,
+            TaskUpdateInput {
+                task_kind: Some(TaskKind::Major),
+                parent_id: Some(Some(main.id.clone())),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(updated.task_kind, TaskKind::Major);
+        assert_eq!(updated.parent_id.as_deref(), Some(main.id.as_str()));
+    }
+
+    #[test]
+    fn update_task_rejects_incompatible_existing_children() {
+        let conn = test_db();
+        let main = create_task(
+            &conn,
+            TaskCreateInput {
+                title: "主任务".into(),
+                children: vec![TaskCreateInput {
+                    title: "大任务".into(),
+                    task_kind: TaskKind::Major,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let result = update_task(
+            &conn,
+            &main.id,
+            TaskUpdateInput {
+                task_kind: Some(TaskKind::Major),
+                ..Default::default()
+            },
+        );
+        assert!(matches!(result, Err(AppError::Validation(_))));
+    }
+
+    #[test]
     fn archive_and_delete_cascade_to_descendants() {
         let conn = test_db();
         let main = create_task(
@@ -2182,9 +2275,38 @@ mod tests {
         assert_eq!(updated.name, "家庭生活");
         assert!(updated.color.is_none());
 
+        let task = create_task(
+            &conn,
+            TaskCreateInput {
+                title: "项目任务".into(),
+                project_id: Some(created.id.clone()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
         archive_project(&conn, &created.id).unwrap();
         assert_eq!(list_projects(&conn, false).unwrap().len(), 4);
         assert_eq!(list_projects(&conn, true).unwrap().len(), 5);
+        assert!(get_task(&conn, &task.id)
+            .unwrap()
+            .unwrap()
+            .archived_at
+            .is_some());
+
+        update_project(
+            &conn,
+            &created.id,
+            ProjectUpdateInput {
+                is_archived: Some(false),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(get_task(&conn, &task.id)
+            .unwrap()
+            .unwrap()
+            .archived_at
+            .is_none());
 
         delete_project(&conn, &created.id).unwrap();
         assert!(get_project(&conn, &created.id).unwrap().is_none());

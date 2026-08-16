@@ -45,6 +45,12 @@ describe("tasksStore", () => {
     expect(useTasksStore.getState().selectedIds).toEqual([]);
   });
 
+  it("clears selection when filter changes", () => {
+    useTasksStore.getState().setSelectedIds(["a", "b"]);
+    useTasksStore.getState().setFilter({ statuses: ["completed"] });
+    expect(useTasksStore.getState().selectedIds).toEqual([]);
+  });
+
   it("batch completes selected tasks", async () => {
     const first = await useTasksStore.getState().createTask({ title: "批量完成一" });
     const second = await useTasksStore.getState().createTask({ title: "批量完成二" });

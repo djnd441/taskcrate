@@ -111,7 +111,11 @@ export function TrashView() {
             variant="danger"
             size="sm"
             disabled={selectedIds.length === 0}
-            onClick={() => void removeForever(selectedIds)}
+            onClick={() => {
+              if (window.confirm(`确定彻底删除选中的 ${selectedIds.length} 项？`)) {
+                void removeForever(selectedIds);
+              }
+            }}
           >
             <Trash2 size={14} />
             删除选中
@@ -158,7 +162,15 @@ export function TrashView() {
                   <RotateCcw size={14} />
                   恢复
                 </Button>
-                <Button variant="danger" size="sm" onClick={() => void removeForever([task.id])}>
+                <Button
+                  variant="danger"
+                  size="sm"
+                  onClick={() => {
+                    if (window.confirm(`彻底删除 ${task.title}？`)) {
+                      void removeForever([task.id]);
+                    }
+                  }}
+                >
                   <Trash2 size={14} />
                   彻底删除
                 </Button>

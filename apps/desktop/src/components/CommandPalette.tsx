@@ -1,4 +1,14 @@
-import { Kanban, ListTodo, Plus, Search, Settings, Trash2 } from "lucide-react";
+import {
+  BarChart3,
+  Bot,
+  Inbox,
+  Kanban,
+  ListTodo,
+  Plus,
+  Search,
+  Settings,
+  Trash2,
+} from "lucide-react";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Input, Modal } from "@task-manager/ui";
 import { shouldIgnoreEnter } from "../lib/ime";
@@ -75,6 +85,33 @@ export function CommandPalette() {
         run: () => {
           setOpen(false);
           setView("trash");
+        },
+      },
+      {
+        label: "收件箱",
+        hint: "视图",
+        icon: <Inbox size={15} />,
+        run: () => {
+          setOpen(false);
+          useUiStore.getState().enterInbox();
+        },
+      },
+      {
+        label: "AI 助手",
+        hint: "视图",
+        icon: <Bot size={15} />,
+        run: () => {
+          setOpen(false);
+          setView("ai");
+        },
+      },
+      {
+        label: "报表",
+        hint: "视图",
+        icon: <BarChart3 size={15} />,
+        run: () => {
+          setOpen(false);
+          setView("reports");
         },
       },
       {
